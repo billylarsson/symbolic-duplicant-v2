@@ -63,8 +63,8 @@ default_dict = dict(
         settingsbutton=[
             dict(activated_on=dict(background=GREEN2, color=GRAY10)),
             dict(activated_off=dict(background=GREEN4, color=GRAY10, font=12)),
-            dict(deactivated_on=dict(background=RED1, color=GRAY10)),
-            dict(deactivated_off=dict(background=RED4, color=GRAY10, font=12))
+            dict(deactivated_on=dict(background=GRAY22, color=BLACK)),
+            dict(deactivated_off=dict(background=GRAY13, color=BLACK, font=12))
         ],
     ),
 )

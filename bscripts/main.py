@@ -366,12 +366,52 @@ class MainDuplicant(QtWidgets.QMainWindow):
         self.create_settings_buttons()
         self.create_browse_button()
         imdb_things(self)
+        self.create_kill_all_dead()
 
         self.signal = t.signals('main')
         self.signal.listdelivery.connect(self.draw_files_and_folders)
 
         dbcache('skipped')
         t.thread(self.browse_files_and_folders)
+
+    def create_kill_all_dead(self):
+        class KillBTN(GODLabel, GLOBALHighLight):
+            def __init__(self, *args, **kwargs):
+                super().__init__(
+                    deactivated_on=dict(background=BLACK, color=WHITE),
+                    deactivated_off=dict(background=GRAY, color=BLACK),
+                    *args, **kwargs
+                )
+
+            def mouseReleaseEvent(self, ev):
+                auto = False
+                for i in [x for x in self.main.ff if x['category'] == 'dead']:
+                    if os.path.islink(i['path']):
+
+                        if not auto:
+                            userinput = input(f"DELETE: {i['path']} (Yes, No, All, Quit)")
+
+                        if userinput[0].lower() == 'q':
+                            break
+
+                        if userinput[0].lower() == 'a':
+                            auto = True
+
+                        if userinput[0].lower() == 'y' or auto == True:
+                            os.remove(i['path'])
+
+                            folder = i['path'].split(os.sep)[1:-1]
+
+                            for walk in os.walk(os.sep.join(folder)):
+                                if not walk[1] and not walk[2]:
+                                    shutil.rmtree(walk[0])
+                                    break
+
+                        self.main.ff = [x for x in self.main.ff if x != i]
+
+
+        kill = KillBTN(place=self, mouse=True, qframebox=True, center=True, text='KILL ALL DEAD', main=self)
+        pos(kill, coat=self.refresh_imdb_button, after=self.refresh_imdb_button, x_margin=3)
 
     def browse_files_and_folders(self):
         folder = t.config('download_folder')
@@ -435,6 +475,7 @@ class MainDuplicant(QtWidgets.QMainWindow):
         completelist  = [{'used':False, 'path':x.rstrip(os.sep), 'category': 'folder'} for x in files['folders']]
         completelist += [{'used':False, 'path':x.rstrip(os.sep), 'category': 'linked'} for x in files['linked']]
         completelist += [{'used':False, 'path':x.rstrip(os.sep), 'category': 'unlinked'} for x in files['unlinked']]
+        completelist += [{'used':False, 'path':x.rstrip(os.sep), 'category': 'dead'} for x in files['dead']]
 
         completelist.sort(key=lambda x:x['path'])
         self.signal.listdelivery.emit(completelist)
@@ -461,6 +502,7 @@ class MainDuplicant(QtWidgets.QMainWindow):
                 elif t.config('HIDE UNLINKED') and i['category'] == 'unlinked':
                     continue
 
+
                 if i['category'] == 'folder':
                     linked = [x for x in self.ff if x['category'] == 'linked' and x['path'].startswith(i['path'])]
                     unlinked = [x for x in self.ff if x['category'] == 'unlinked' and x['path'].startswith(i['path'])]
@@ -473,6 +515,7 @@ class MainDuplicant(QtWidgets.QMainWindow):
 
                     if t.config('HIDE UNLINKED') and not linked:
                         continue
+
 
                 tmp = i['path'].split(os.sep)
                 tmp = os.sep.join(tmp[0:-1])
@@ -511,15 +554,15 @@ class MainDuplicant(QtWidgets.QMainWindow):
         t.highlight_style(button, name='folders')
 
     def create_settings_buttons(self):
-        for count, i in enumerate(['HIDE LINKED', 'HIDE UNLINKED', 'HIDE SKIPPED']):
+        for i in [('HIDE LINKED',False,), ('HIDE UNLINKED',True,), ('HIDE SKIPPED',True,)]:
             back = GODLabel(place=self)
             style(back, background=GRAY50)
             pos(back, size=[170,30])
-            button = SettingsButton(place=back, mouse=True, type=i, text=i, center=True, bold=True)
+            button = SettingsButton(place=back, mouse=True, type=i[0], text=i[0], center=True, bold=True)
             pos(button, inside=back, margin=1)
-            button.activation_toggle(force=t.config(i) or False)
+            button.activation_toggle(force=t.config(i[0]) or False)
             t.highlight_style(button, name='settingsbutton')
-            self.position_this(back, vertical=count, x_extra=3, y_extra=3)
+            self.position_this(back, vertical=i[1], x_extra=3, y_extra=3)
 
         t.signal_highlight()
 

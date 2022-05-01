@@ -224,13 +224,13 @@ def imdb_things(self):
             signal.finished.connect(show_finished)
             t.start_thread(self.download_and_update, slave_args=signal)
 
-    makeimdb = RefreshImdb(
+    self.refresh_imdb_button = RefreshImdb(
         place=self,
         mouse=True,
         main=self,
     )
-    t.pos(makeimdb, size=[200,50], bottom=self.height()-1)
-    makeimdb.setText('UPDATE IMdb')
+    t.pos(self.refresh_imdb_button, size=[200,50], bottom=self.height()-1)
+    self.refresh_imdb_button.setText('UPDATE IMdb')
     t.signal_highlight()
 
 class CoverTurner(MovableScrollWidget):
