@@ -1,0 +1,6 @@
+paramiko==2.9.2
+Pillow==9.1.0
+PyQt5==5.15.6
+requests==2.27.1
+screeninfo==0.7
+SQLAlchemy==1.4.23
