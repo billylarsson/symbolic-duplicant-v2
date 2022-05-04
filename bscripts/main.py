@@ -1,15 +1,18 @@
 from PyQt5                     import Qt, QtCore, QtWidgets
+from PyQt5.QtCore              import QEvent
 from bscripts.database_stuff   import DB, sqlite
+from bscripts.imdb_updater     import imdb_things
 from bscripts.imdbstuff        import CoverTurner
-from bscripts.imdb_updater import imdb_things
 from bscripts.preset_colors    import *
-from bscripts.settings_widgets import Canvas, GLOBALHighLight, GODLabel, EventFilter
-from PyQt5.QtCore           import QEvent
-from bscripts.settings_widgets import MovableScrollWidget, create_indikator
+from bscripts.settings_widgets import Canvas, EventFilter, GLOBALHighLight
+from bscripts.settings_widgets import GODLabel, MovableScrollWidget
+from bscripts.settings_widgets import create_indikator
 from bscripts.tricks           import tech as t
-import os, time
+import datetime
+import os
 import screeninfo
-import sys, datetime
+import sys
+import time 
 
 pos = t.pos
 style = t.style

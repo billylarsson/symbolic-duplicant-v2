@@ -2,10 +2,11 @@ from PyQt5                     import QtCore, QtGui, QtWidgets
 from bscripts.preset_colors    import *
 from bscripts.settings_widgets import GLOBALHighLight, GODLabel
 from bscripts.tricks           import tech as t
+from bscripts.database_stuff   import sqlite, DB, Translate
 import gzip
 import os
 import shutil
-import time 
+import time
 
 def imdb_things(self):
     class RefreshButton(GODLabel, GLOBALHighLight):
@@ -25,8 +26,7 @@ def imdb_things(self):
             manylist = []
 
             def download(url):
-                tmpfile = t.tmp_file(url, hash=True, days=1, extension='gz')
-                file = t.download_file(url, tmpfile, days=1)
+                file = t.download_file(url, days=1)
                 if not os.path.exists(file):
                     return False
                 else:
