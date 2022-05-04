@@ -5,4 +5,7 @@
 Doubt anyone will use this but me since its pretty tailor made for my NAS326 system.
 
 However, what it does is that it makes symbolic links from one large "downloads" folder into a nice sorted folder, this makes KODI or other media players (or humans) find what its looking for with ease.
+
+Downloads IMDb database locally and fetch data/covers/locations from there.
+
 The thing with symbolic links is that the original file isnt touched, so you can continue to seed the torrent.
