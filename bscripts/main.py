@@ -12,7 +12,7 @@ import datetime
 import os
 import screeninfo
 import sys
-import time 
+import time
 
 pos = t.pos
 style = t.style
@@ -191,7 +191,6 @@ class File(FilesFolder):
         return name, years, episode
 
     def gather_imdb_candidates(self, name, years, episode):
-        print("Searging:", name, years, episode)
         if not name:
             return []
 

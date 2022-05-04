@@ -166,7 +166,12 @@ class IMDBPlate(GODLabel):
 
             def mouseReleaseEvent(self, ev):
                 self.hold = False
-                webbrowser.open(self.link)
+
+                if ev.button() == 1:
+                    webbrowser.open(self.link)
+                else:
+                    sqlite.execute('delete from imgcache where tconst is (?)', self.parent.candidates[0][DB.titles.tconst])
+                    self.parent.title.setText('COVER DELETED FROM IMG CACHE')
 
         link = f"http://imdb.com/title/{self.parent.candidates[0][DB.titles.tconst]}"
         back = GODLabel(place=self.main, styleSheet='background:rgb(10,10,10)', parent=self.parent)
@@ -181,8 +186,8 @@ class IMDBPlate(GODLabel):
 
         self.imdblink, label.backplate, label.link = back, back, link
 
-        EventFilter(eventparent=self, eventtype=QEvent.Move, master_fn=label.follow_parent)
-        EventFilter(eventparent=self, eventtype=QEvent.Resize, master_fn=label.follow_parent)
+        EventFilter(eventparent=self.parent, eventtype=QEvent.Move, master_fn=label.follow_parent)
+        EventFilter(eventparent=self.parent, eventtype=QEvent.Resize, master_fn=label.follow_parent)
         EventFilter(eventparent=self.parent, eventtype=QEvent.Close, master_fn=lambda: self.imdblink.close())
 
     def position_this(self, widget, vertical=True, x_extra=0, y_extra=0, **kwargs):

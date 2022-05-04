@@ -47,8 +47,8 @@ default_dict = dict(
             dict(deactivated_off=dict(background='rgb(29,29,29)', color='rgb(201,201,201)', font=20))
         ],
         implement=[
-            dict(deactivated_on=dict(background='rgb(190,190,255)', color=BLACK)),
-            dict(deactivated_off=dict(background='rgb(150,150,230)', color=BLACK, font=10))
+            dict(deactivated_on=dict(background=GREEN1, color=BLACK)),
+            dict(deactivated_off=dict(background=GREEN4, color=BLACK, font=10))
         ],
         unimplement=[
             dict(deactivated_on=dict(background='rgb(200,200,255)', color=BLACK)),
