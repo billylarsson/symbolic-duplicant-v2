@@ -2,7 +2,7 @@ from PyQt5                  import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore           import QEvent, QObject, pyqtSignal
 from bscripts.preset_colors import *
 from bscripts.tricks        import tech as t
-import os
+import os, time
 
 pos = t.pos
 style = t.style
@@ -199,6 +199,8 @@ class GODLEPath(GODLE):
                 self.signal.activated.emit()
 
 class GLOBALHighLight(DragDroper, GOD):
+    _decaylamp_timer = 0
+    _decaylamp_runner = False
     def __init__(self,
                  signal=True,
                  highlight_signal='_global',
@@ -219,8 +221,6 @@ class GLOBALHighLight(DragDroper, GOD):
         self.deactivated_on = deactivated_on or dict(background=RED1, color=BLACK)
         self.deactivated_off = deactivated_off or dict(background=RED, color=BLACK)
 
-        self.old_stylesheet = None
-
     def highlight_toggle(self, string=None):
         if string == self.type:
             if self.activated:
@@ -234,8 +234,22 @@ class GLOBALHighLight(DragDroper, GOD):
                 t.style(self, **self.deactivated_off)
 
     def mouseMoveEvent(self, ev: QtGui.QMouseEvent) -> None:
-        self._highlight_signal.highlight.emit(self.type)
+        if ev.button() == 0:
+            self._highlight_signal.highlight.emit(self.type)
+            self._lights_out()
 
+    def _lights_out(self, thread=False):
+        if GLOBALHighLight._decaylamp_runner and time.time() > GLOBALHighLight._decaylamp_timer:
+            GLOBALHighLight._decaylamp_runner = False
+            self._highlight_signal.highlight.emit('_')
+        else:
+            if not thread:
+                GLOBALHighLight._decaylamp_timer = time.time() + 2
+
+            if not GLOBALHighLight._decaylamp_runner or thread:
+                GLOBALHighLight._decaylamp_runner = True
+                delay = GLOBALHighLight._decaylamp_timer - time.time()
+                t.thread(pre_sleep=delay if delay > 0.3 else 0.3, master_fn=self._lights_out, name='climate_changer', master_kwargs={'thread':True})
 
 class SliderWidget(GODLabel):
     def __init__(
@@ -630,6 +644,7 @@ def create_indikator(
 class MovableScrollWidget(GODLabel):
     def __init__(self, toolplate={}, backplate={}, title={}, scrollarea={}, scroller={}, gap=0, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.raise_group = [self]
         self.gap = gap or 0
         self.make_toolplate(**toolplate)
         self.make_backplate(**backplate)
@@ -662,7 +677,7 @@ class MovableScrollWidget(GODLabel):
         self.scrollarea.show()
 
     def raise_us(self):
-        self.raise_()
+        [x.raise_() for x in self.raise_group]
 
     def drag_widget(self, ev):
         if not self.old_position:
@@ -683,8 +698,7 @@ class MovableScrollWidget(GODLabel):
 
         def mousePressEvent(self, ev: QtGui.QMouseEvent) -> None:
             self.parent.old_position = ev.globalPos()
-            if ev.button() == 1:
-                self.parent.raise_us()
+            self.parent.raise_us()
 
     def make_title(self, *args, **kwargs): # backwards compatible
         self.set_title(*args, **kwargs)

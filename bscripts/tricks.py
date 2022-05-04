@@ -37,7 +37,9 @@ default_dict = dict(
             dict(deactivated_off=dict(background='rgb(25,20,20)', color='rgb(222,222,222)', font=14))
         ],
         files=[
-            dict(deactivated_on=dict(background='rgb(30,40,30)', color=WHITE, font=13)),
+            dict(activated_on=dict(background='rgb(30,70,30)', color=WHITE)),
+            dict(activated_off=dict(background='rgb(15,55,15)', color='rgb(211,211,211)')),
+            dict(deactivated_on=dict(background='rgb(30,40,30)', color=WHITE)),
             dict(deactivated_off=dict(background='rgb(15,25,15)', color='rgb(211,211,211)', font=13))
         ],
         goback=[
@@ -1846,3 +1848,4 @@ class WorkerSignals(QObject):
     dictdelivery = pyqtSignal(dict)
     listdelivery = pyqtSignal(list)
     stringdelivery = pyqtSignal(str)
+    digitdelivery = pyqtSignal(int)

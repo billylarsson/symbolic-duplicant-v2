@@ -1,243 +1,206 @@
 from PyQt5                     import QtCore, QtGui, QtWidgets
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui               import QPixmap
 from bscripts.database_stuff   import DB, Translate, sqlite
 from bscripts.preset_colors    import *
-from bscripts.settings_widgets import GLOBALHighLight, GODLabel, MovableScrollWidget
+from PyQt5.QtCore              import QEvent
+from bscripts.settings_widgets import GLOBALHighLight, GODLabel, EventFilter
+from bscripts.settings_widgets import MovableScrollWidget
+from bscripts.sshstuff         import ssh_command
 from bscripts.tricks           import tech as t
-import gzip
-import os, paramiko
+import os, random, webbrowser
 import shutil
 import time
 
 pos = t.pos
 style = t.style
 
-def ssh_command(command, sleep=1):
-    s = paramiko.SSHClient()
-    s.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    s.load_system_host_keys()
-    s.connect(
-        t.config('nas_ssh', curious=True),
-        '22',
-        t.config('nas_login', curious=True),
-        t.config('nas_pwd', curious=True)
-    )
-    s.exec_command(command)
-    time.sleep(sleep)
-    s.close()
+class TitleGenre(GODLabel, GLOBALHighLight):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hold = False
 
-def imdb_things(self):
-    class RefreshButton(GODLabel, GLOBALHighLight):
-        def __init__(self, *args, **kwargs):
-            super().__init__(
-                deactivated_on=dict(background=BLACK, color=WHITE),
-                deactivated_off=dict(background=GRAY, color=BLACK),
-                *args, **kwargs
-            )
-            self.setAlignment(QtCore.Qt.AlignHCenter|QtCore.Qt.AlignVCenter)
-            self.setFrameShape(QtWidgets.QFrame.Box)
-            self.setLineWidth(1)
+    def mousePressEvent(self, ev):
+        self.hold = True
+        self.parent.title.mousePressEvent(ev)
 
+    def mouseMoveEvent(self, ev):
+        if not self.hold:
+            self._highlight_signal.highlight.emit(self.type)
+            self._lights_out()
+            return
 
-    class RefreshImdb(RefreshButton):
-        def download_and_update(self, signal):
-            manylist = []
+        self.parent.drag_widget(ev)
 
-            def download(url):
-                tmpfile = t.tmp_file(url, hash=True, days=1, extension='gz')
-                file = t.download_file(url, tmpfile, days=1)
-                if not os.path.exists(file):
-                    return False
-                else:
-                    return file
+    def mouseReleaseEvent(self, ev):
+        self.hold = False
 
-            def unpack(file, url):
-                tmpfile = t.tmp_file(file_of_interest=url, hash=True, delete=True, extension='tsv')
-                try:
-                    with gzip.open(file, 'rb') as f_in:
-                        with open(tmpfile, 'wb') as f_out:
-                            shutil.copyfileobj(f_in, f_out)
-                except:
-                    return False
+class Episode(TitleGenre):
+    def mouseDoubleClickEvent(self, a0):
+        if a0.button() == 1:
+            self.show_episode(1)
+        else:
+            self.show_episode(-1)
 
-                if not os.path.exists(tmpfile):
-                    return False
+    def show_episode(self, add=0):
+        episode = self.parent.get_episode()
+        if episode:
+            ep = int(episode[0][4:6]) + add
+            if len(str(ep)) != 2:
+                ep = str(0) + str(ep)
 
-                return tmpfile
+            ep = f"{episode[0][0:4]}{ep}"
+            self.setText(ep)
+            self.parent.s01e01 = [ep]
+            self.parent.set_proper_title()
 
-            def get_cycle_stuff(f):
-                content = f.read().split('\n')
-                headers = content[0].split('\t')
-                for count, i in enumerate(headers):
-                    if i == 'titleType':
-                        typeindex = count
+class IMDBPlate(GODLabel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        style(self, background='transparent', color='transparent')
+        self.parent.raise_group.append(self)
+        self.positioned = []
 
-                return content, headers, typeindex
+    def __call__(self):
+        t.close_and_pop(self.positioned)
+        pos(self, width=self.parent.width() * 0.5, height=self.parent.height() * 0.5)
 
-            signal.progress.emit(dict(text='DOWNLOADING...'))
-            url = 'https://datasets.imdbws.com/title.basics.tsv.gz'
-            file = download(url)
-            if not file:
-                signal.error.emit(dict(text='DOWNLOAD FAILED'))
-                return False
+        self.make_year()
+        self.make_title()
+        self.make_episode()
+        self.make_categories()
 
-            signal.progress.emit(dict(text='UNPACKING...'))
-            tsvfile = unpack(file, url)
-            if not tsvfile:
-                signal.error.emit(dict(text='UNPACKING FAILED'))
-                return False
+        xy = [(x.geometry().right(), x.geometry().bottom()) for x in self.positioned]
+        xy.sort(key=lambda x:x[0])
+        pos(self, width=xy[-1][0] + 2)
+        xy.sort(key=lambda x:x[1])
+        pos(self, height=xy[-1][1] + 2)
 
-            includetypes = {'movie', 'tvSeries', 'tvMiniSeries'}
+        self.make_imdb_link()
+        self.follow_parent()
 
-            checkpoint = 10000
-            timer = time.time()
-            with open(tsvfile) as f:
-                signal.progress.emit(dict(text='UPDATING...'))
-                content, headers, typeindex = get_cycle_stuff(f)
-                query, values_org = sqlite.empty_insert_query('titles')
-                sqlite.execute('delete from titles;') # deletes everything before starting
+    def make_episode(self):
+        episode = self.parent.get_episode()
+        if episode:
+            label = Episode(place=self, qframebox=True, text=episode[0].upper(), center=True, mouse=True, parent=self.parent, monospace=True, bold=True)
+            style(label, font=10)
+            label.deactivated_on = dict(background=GRAY53, color=GRAY15)
+            label.deactivated_off = dict(background=GRAY45, color=GRAY12)
+            t.shrink_label_to_text(label, x_margin=20, y_margin=2, height=True)
+            label.show_episode()
+            self.position_this(label, y_extra=-1)
 
-                for checkcount, i in enumerate(content[1:]):
-                    data = i.split('\t')
+    def make_title(self):
+        label = TitleGenre(place=self, qframebox=True, text=self.parent.candidates[0][DB.titles.type].upper(), center=True, mouse=True, parent=self.parent)
+        style(label, font=14)
+        label.deactivated_on = dict(background=GRAY60, color=GRAY10)
+        label.deactivated_off = dict(background=GRAY50, color=GRAY8)
+        t.shrink_label_to_text(label, x_margin=20, y_margin=2, height=True)
+        self.position_this(label, y_extra=-1)
 
-                    if len(data) != len(headers):  # discards random errors (last row)
-                        continue
+    def make_year(self):
+        year = f"{self.parent.candidates[0][DB.titles.start_year] or ''}"
+        if self.parent.candidates[0][DB.titles.end_year]:
+            year += f"- {self.parent.candidates[0][DB.titles.end_year]}"
 
-                    if data[typeindex] not in includetypes:
-                        continue
+        if year:
+            label = TitleGenre(place=self, qframebox=True, text=year, center=True, mouse=True, parent=self.parent)
+            style(label, font=10)
+            label.deactivated_on = dict(background=GRAY65, color=GRAY10)
+            label.deactivated_off = dict(background=GRAY55, color=GRAY10)
+            t.shrink_label_to_text(label, x_margin=20, y_margin=2, height=True)
+            self.position_this(label)
 
-                    values = [None] * len(values_org)  # fresh values
+    def make_categories(self):
+        for count, i in enumerate(self.parent.candidates[0]):
+            if i == '1':
+                cols = [x for x in dir(DB.titles) if '__' not in x]
+                if not [getattr(DB.titles, x) for x in cols if getattr(DB.titles, x) == count]:
+                    rvdict = sqlite.get_all_tables_and_columns()
+                    setattr(DB.titles, rvdict['titles'][count], count)
 
-                    for count in range(len(headers)):
-                        if data[count] == '\\N':  # None
-                            continue
+                for ii in [x for x in dir(DB.titles) if '__' not in x]:
+                    if getattr(DB.titles, ii) == count:
 
-                        elif headers[count] == 'originalTitle':  # that data seems unnessesary atm
-                            continue
+                        rgb, top = (255,255,255,), 150
 
-                        elif headers[count] == 'isAdult':  # genre/Adult ALMOST provides same knowledge
-                            continue
+                        while sum(rgb) > 400:
+                            random.seed('red' + ii)
+                            red = top * random.random()
+                            random.seed('green' + ii)
+                            green = top * random.random()
+                            random.seed('blue' + ii)
+                            blue = top * random.random()
+                            rgb, top = (red if red < 235 else 235, green if green < 235 else 235, blue if blue < 235 else 235,), top-1
+                            rgb = (rgb[0] if rgb[0] > 30 else 30, rgb[1] if rgb[1] > 30 else 30, rgb[2] if rgb[2] > 30 else 30,)
 
-                        elif headers[count] == 'genres':
-                            genres = data[count].split(',')
-                            for genre in genres:
+                        red, green, blue = int(rgb[0]), int(rgb[1]), int(rgb[2])
+                        rgb1 = f'rgb({red if red > 30 else 30},{green if green > 30 else 30},{blue if blue > 30 else 30})'
+                        rgb2 = f'rgb({red+15 if red > 45 else 45},{green+15 if green > 45 else 45},{blue if blue+15 > 45 else 45})'
 
-                                if genre == '\\N':  # None
-                                    continue
+                        back = GODLabel(place=self, styleSheet='background:rgb(10,10,10)', type='_move')
+                        label = TitleGenre(place=back, text=ii, center=True, mouse=True, parent=self.parent)
 
-                                if not getattr(DB.titles, genre, None):
-                                    if manylist:
-                                        sqlite.execute(query, values=manylist)  # empties stack
-                                        manylist = []
-
-                                    column = sqlite.db_sqlite('titles', genre)
-                                    setattr(DB.titles, genre, column)
-                                    query, values_org = sqlite.empty_insert_query('titles')
-
-                                    for prolong in range(len(values_org) - len(values)):  # prolong values
-                                        values.append(None)
-
-                                values[getattr(DB.titles, genre)] = True
-
+                        if sum([red, green, blue]) < 150:
+                            label.deactivated_on = dict(background=rgb2, color=GRAY)
+                            label.deactivated_off = dict(background=rgb1, color=GRAY, font=11)
                         else:
-                            index = getattr(Translate.titles, headers[count])
+                            label.deactivated_on = dict(background=rgb2, color=BLACK)
+                            label.deactivated_off = dict(background=rgb1, color=BLACK, font=11)
 
-                            for cc in range(len(data[count])):  # forces string-int into int
+                        t.shrink_label_to_text(label, x_margin=20, y_margin=2, height=True)
+                        pos(back, height=label, width=label, add=2)
+                        pos(label, top=1, left=1)
 
-                                if not data[count][cc].isdigit():
-                                    values[index] = data[count]
-                                    break
+                        self.position_this(back, y_extra=3)
 
-                                elif cc + 1 == len(data[count]):
-                                    values[index] = int(data[count])
+        {pos(x, move=[0,15]) for x in self.positioned if x.type == '_move'}
 
-                    manylist.append(tuple(values))
-                    if checkcount > checkpoint and time.time() - timer > 0.25:
-                        timer = time.time()
-                        checkpoint += 10000
-                        signal.progress.emit(dict(
-                            progress=checkcount / len(content),
-                        ))
+    def make_imdb_link(self):
+        if 'imdblink' in dir(self):
+            self.imdblink.close()
 
-            if manylist:
-                signal.progress.emit(dict(progress=1, text='INJECTING'))
-                sqlite.execute(query, values=manylist)
-                signal.finished.emit()
-            else:
-                signal.error.emit(dict(text='NOTHING?'))
+        class IMDBLink(TitleGenre):
+            def follow_parent(self):
+                pos(self.backplate, below=self.parent, move=[10,-5])
+                self.backplate.raise_()
 
-        def mouseReleaseEvent(self, ev: QtGui.QMouseEvent) -> None:
-            self.start_update_process()
+            def mouseReleaseEvent(self, ev):
+                self.hold = False
+                webbrowser.open(self.link)
 
-        def start_update_process(self):
-            def show_progress(progressdict, *args, **kwargs):
+        link = f"http://imdb.com/title/{self.parent.candidates[0][DB.titles.tconst]}"
+        back = GODLabel(place=self.main, styleSheet='background:rgb(10,10,10)', parent=self.parent)
+        label = IMDBLink(place=back, center=True, mouse=True, parent=self.parent, text=link)
+        label.deactivated_on = dict(background=PINK3, color=BLACK)
+        label.deactivated_off = dict(background=PINK4, color=BLACK)
+        t.signal_highlight()
+        t.shrink_label_to_text(label, x_margin=20, y_margin=2, height=True)
 
-                if 'text' in progressdict:
-                    if 'transparent_label' in dir(self):
-                        self.transparent_label.setText(progressdict['text'])
-                    else:
-                        self.setText(progressdict['text'])
+        pos(back, height=label, width=label, add=2, move=[0,40])
+        pos(label, top=1, left=1)
 
-                if 'progress' in progressdict:
-                    if 'progresslabel' not in dir(self):
-                        self.progresslabel = GODLabel(place=self)
-                        self.progresslabel.setFrameShape(QtWidgets.QFrame.Box)
-                        self.progresslabel.setLineWidth(1)
-                        t.style(self.progresslabel, background=GREEN, color=BLACK)
-                        t.pos(self.progresslabel, height=self, width=0)
-                        self.transparent_label = GODLabel(place=self)
-                        t.pos(self.transparent_label, inside=self)
-                        t.style(self.transparent_label, background='rgba(0,0,0,0)', color=BLACK, font=16)
-                        self.transparent_label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+        self.imdblink, label.backplate, label.link = back, back, link
 
-                    width = self.width() * progressdict['progress']
-                    if width > self.progresslabel.width() + 1:
-                        t.pos(self.progresslabel, width=width)
-                        if 'text' not in progressdict:
-                            percent = str(round(progressdict['progress'] * 100,2)) + '%'
-                            self.transparent_label.setText(percent)
-                            self.setText("")
+        EventFilter(eventparent=self, eventtype=QEvent.Move, master_fn=label.follow_parent)
+        EventFilter(eventparent=self, eventtype=QEvent.Resize, master_fn=label.follow_parent)
+        EventFilter(eventparent=self.parent, eventtype=QEvent.Close, master_fn=lambda: self.imdblink.close())
 
-            def show_error(errordict, *args, **kwargs):
-                if 'progresslabel' in dir(self):
-                    self.progresslabel.close()
-                    del self.progresslabel
-                if 'transparent_label' in dir(self):
-                    self.transparent_label.close()
-                    del self.transparent_label
+    def position_this(self, widget, vertical=True, x_extra=0, y_extra=0, **kwargs):
+        x_extra, y_extra = dict(x_margin=x_extra), dict(y_margin=y_extra)
+        self.positioned = [x for x in self.positioned if x != widget]
+        self.main.easy_positions(self, widget, notes=self.positioned, vertical=vertical, y_extra=y_extra, x_extra=x_extra, **kwargs)
+        self.positioned.append(widget)
 
-                self.setText(errordict['text'])
-
-            def show_finished(*args, **kwargs):
-                if 'progresslabel' in dir(self):
-                    self.progresslabel.close()
-                    del self.progresslabel
-                if 'transparent_label' in dir(self):
-                    self.transparent_label.close()
-                    del self.transparent_label
-
-                self.setText('JOBS DONE!')
-
-            signal = t.signals()
-            signal.progress.connect(show_progress)
-            signal.error.connect(show_error)
-            signal.finished.connect(show_finished)
-            t.start_thread(self.download_and_update, slave_args=signal)
-
-    self.refresh_imdb_button = RefreshImdb(
-        place=self,
-        mouse=True,
-        main=self,
-    )
-    t.pos(self.refresh_imdb_button, size=[200,50], bottom=self.height()-1)
-    self.refresh_imdb_button.setText('UPDATE IMdb')
-    t.signal_highlight()
+    def follow_parent(self):
+        pos(self, after=self.parent, x_margin=-10, bottom=self.parent, y_margin=200)
+        self.raise_()
 
 class CoverTurner(MovableScrollWidget):
     def __init__(self, candidates, data, *args, **kwargs):
         super().__init__(*args, **kwargs)
         pos(self, width=480)
         self.overwrite = False
+        self.s01e01 = False
         self.data = data
         self.candidates = candidates
         self.make_title()
@@ -246,7 +209,10 @@ class CoverTurner(MovableScrollWidget):
         self.signal.error.connect(lambda: self.title.setText('ERROR!'))
         self.signal.killswitch.connect(self.killme)
 
-        self.cover = GODLabel(place=self.backplate)
+        self.cover = GODLabel(place=self.backplate, parent=self)
+        self.cover.mousePressEvent = self.title.mousePressEvent
+        self.cover.mouseMoveEvent = self.title.mouseMoveEvent
+
         self.widgets.append(self.cover)
         pos(self.cover, width=self.title, height=self.title.width() * 1.5)
         style(self.cover, background=BLACK, color=WHITESMOKE)
@@ -264,6 +230,8 @@ class CoverTurner(MovableScrollWidget):
         if not self.lineedit.text().strip():
             self.title.setText('oooh, please...!')
             return
+
+        self.s01e01 = False  # resets this, lazy fix
 
         name, years, episode = self.parent.search_this_string(searchstring=self.lineedit.text().strip())
         data = self.parent.gather_imdb_candidates(name, years, episode)
@@ -293,7 +261,6 @@ class CoverTurner(MovableScrollWidget):
 
     def killme(self):
         self.close()
-
 
     def implement_file(self):
         loc = self.get_distant_path_object()
@@ -363,10 +330,12 @@ class CoverTurner(MovableScrollWidget):
 
             loc = t.separate_file_from_folder(path + os.sep + self.candidates[0][DB.titles.title])
             ext = self.data['path'].lower().split('.')[-1]
-            episode = self.parent.get_episode(self.data['path'])
-            if episode: episode = episode[0]
-            else: episode = ""
-            fname = f"{self.candidates[0][DB.titles.title]} {episode}.{ext}"
+
+            episode = self.get_episode() or ""
+            if episode:
+                episode = " " + episode[0]
+
+            fname = f"{self.candidates[0][DB.titles.title]}{episode}.{ext}"
             loc = t.separate_file_from_folder(loc.path + os.sep + fname)
 
         return loc
@@ -438,22 +407,25 @@ class CoverTurner(MovableScrollWidget):
         if store:
             self.store_cover_to_cache(path)
 
-    def set_proper_title(self):
-        text = self.candidates[0][DB.titles.title]
-
+    def get_episode(self):
         if self.lineedit.text():
             searchstring = self.lineedit.text().strip()
         else:
             searchstring = self.data['path']
 
         _, _, episode = self.parent.search_this_string(searchstring=searchstring)
+        return self.s01e01 or episode
+
+    def set_proper_title(self):
+        text = self.candidates[0][DB.titles.title]
+        episode = self.get_episode()
         if episode:
             text += f" {episode[0].upper()}"
 
         self.title.setText(text)
 
     def store_cover_to_cache(self, path):
-        blob = t.make_image_into_blob(path)
+        blob = t.make_image_into_blob(path, quality=80, method=1)  # prefer speed over storage
         data = sqlite.execute('select * from imgcache where tconst = (?)', self.candidates[0][DB.titles.tconst])
         if not data:
             query, values = sqlite.empty_insert_query('imgcache')
@@ -468,7 +440,7 @@ class CoverTurner(MovableScrollWidget):
             return
 
         if next:
-            self.candidates.insert(-1, self.candidates[0])
+            self.candidates.append(self.candidates[0])
             self.candidates.pop(0)
 
         elif previous:
@@ -489,7 +461,13 @@ class CoverTurner(MovableScrollWidget):
         self.overwrite = False
 
     def show_year_genre_runtime_type(self):
-        pass
+        if not 'imdbplate' in dir(self):
+            self.imdbplate = IMDBPlate(place=self.main, main=self.main, parent=self)
+            EventFilter(eventparent=self, master_fn=self.imdbplate.follow_parent, eventtype=QEvent.Move)
+            self.signal.killswitch.connect(lambda: self.imdbplate.close())
+
+        self.imdbplate()
+        self.imdbplate.follow_parent()
 
     def download_imdb_cover(self, db_input):
         left = '<meta property="og:image" content="'

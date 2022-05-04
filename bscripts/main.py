@@ -1,11 +1,13 @@
 from PyQt5                     import Qt, QtCore, QtWidgets
 from bscripts.database_stuff   import DB, sqlite
-from bscripts.imdbstuff        import imdb_things,CoverTurner
+from bscripts.imdbstuff        import CoverTurner
+from bscripts.imdb_updater import imdb_things
 from bscripts.preset_colors    import *
-from bscripts.settings_widgets import Canvas, GLOBALHighLight, GODLabel
+from bscripts.settings_widgets import Canvas, GLOBALHighLight, GODLabel, EventFilter
+from PyQt5.QtCore           import QEvent
 from bscripts.settings_widgets import MovableScrollWidget, create_indikator
 from bscripts.tricks           import tech as t
-import os
+import os, time
 import screeninfo
 import sys, datetime
 
@@ -21,6 +23,7 @@ class SettingsButton(GODLabel, GLOBALHighLight):
 class GOBack(GODLabel, GLOBALHighLight):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.data = dict(path='..')
         t.highlight_style(self, 'folders')
 
     def mouseReleaseEvent(self, ev):
@@ -71,36 +74,52 @@ class Folder(FilesFolder):
             self.main.browser.widgets.append(thing)
             self.main.draw_this_dir(self.data['path'])
             self.main.browser.title.setText(self.data['path'])
+            t.correct_broken_font_size(self.main.browser.title, presize=False, shorten=True)
         else:
             self.skip_this_path()
 
 class File(FilesFolder):
     def __init__(self, data, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(signal=True, *args, **kwargs)
         self.candidate = None
         self.data = data
         t.highlight_style(self, 'files')
 
     def mouseReleaseEvent(self, ev):
+        self.activation_toggle()
+
         if ev.button() == 1:
             if not self.candidate:
                 self.open_file(ev)
+                self.candidate.signal.killswitch.connect(lambda: self.activation_toggle(force=False))
                 self.candidate.signal.killswitch.connect(lambda: setattr(self, 'candidate', None))
+                self.candidate.signal.killswitch.connect(t.signal_highlight)
                 t.signal_highlight()
             else:
                 self.candidate.signal.killswitch.emit()
         else:
             self.skip_this_path()
 
-    def show_size(self):
-        size = os.path.getsize(self.data['path'])
+    def gather_size(self, path):
+        size = os.path.getsize(path)
+        self.signal.dictdelivery.emit(dict(value=size or -1))
 
-        if size > 1000000000:
-            text = f"{round(size / 1000000000, 2)} GB"
+    def show_size(self, size=False):
+        if size:
+            self.data['size'] = size['value']
+
+        if not self.data['size']:
+            self.signal.dictdelivery.connect(self.show_size)
+            t.thread(slave_fn=self.gather_size, slave_args=self.data['path'], name='sizegather', threads=1)
+            return
+
+        if self.data['size'] > 1000000000:
+            text = f"{round(self.data['size'] / 1000000000, 2)} GB"
         else:
-            text = f"{round(size / 1000000)} MB"
+            text = f"{round(self.data['size'] / 1000000)} MB"
 
         self.size = GODLabel(place=self, text=text, center=True, monospace=True)
+
         style(self.size, background='transparent', color='WHITE')
         t.shrink_label_to_text(self.size)
         pos(self.size, height=self, right=self.width() - 10)
@@ -136,7 +155,7 @@ class File(FilesFolder):
             if str(i).lower() in name.lower():
                 name = name[0:name.lower().find(str(i).lower())]
 
-        if name[0] == '[' and ']' in name:
+        if name and name[0] == '[' and ']' in name:
             name = name[name.find(']')+1:]
 
         name = name.replace(' ', '.').split('.')
@@ -169,6 +188,9 @@ class File(FilesFolder):
         return name, years, episode
 
     def gather_imdb_candidates(self, name, years, episode):
+        print("Searging:", name, years, episode)
+        if not name:
+            return []
 
         def splitsearch(data):
             titles = {x[DB.titles.title].lower() for x in data}
@@ -178,11 +200,56 @@ class File(FilesFolder):
 
             return [x for x in data if x[DB.titles.title].lower() in titles]
 
+        def get_fuzzy_title(years, ratio=0.75, strikes=3):  # takes longer time, therefore using this only if year is present
+            data = self.fetch_data(years, episode)
+            match = []
+            for imdb in data:
+
+                title = imdb[DB.titles.title].lower()
+                thing = dict(db_input=imdb, strikes=0, score=0, ratio=0)
+
+                for letter in name.lower():
+                    c = title.find(letter)
+
+                    if c > -1:
+                        title = title[c+1:]
+                        if c:
+                            thing['strikes'] += 1
+                        else:
+                            thing['score'] += 1
+
+                    else:
+                        thing['strikes'] += 1
+                        thing['score'] += -1
+                        if thing['strikes'] > 3:
+                            break
+
+                        title = title[1:]
+
+                if thing['strikes'] <= strikes and thing['score']:
+                    thing['ratio'] = thing['score'] / len(imdb[DB.titles.title])
+
+                    if thing['ratio'] >= ratio:
+                        match.append(thing)
+
+            match.sort(key=lambda x:x['ratio'], reverse=True)
+            return [x['db_input'] for x in match]
+
         if years:
             data = self.fetch_data(years, episode)
             data = splitsearch(data)
+            if not data:
+                data = get_fuzzy_title(years)
 
         if not years or not data:
+            for i in range(datetime.datetime.now().year + 1, datetime.datetime.now().year - 5, -1):
+                data = get_fuzzy_title([i], ratio=1, strikes=0)
+                if not data:
+                    data = get_fuzzy_title([i], strikes=1)
+                if data:
+                    break
+
+        if not data:
             data = self.fetch_data([x for x in range(2000, datetime.datetime.now().year + 1)], episode)
             data = splitsearch(data)
 
@@ -221,18 +288,18 @@ class DBFromCache:
 
         if query and query+str(values) not in self.cache:
             data = sqlite.execute(query=query, values=values, all=all)
-            self.cache[query+str(values)] = [x for x in data]
+            self.cache[query+str(values)] = {x for x in data}
 
         if table and table not in self.cache:
             query = f'select * from {table}'
             data = sqlite.execute(query=query, all=all)
-            self.cache[table] = [x for x in data]
+            self.cache[table] = {x for x in data}
 
         if table and table in self.cache:
-            return self.cache[table]
+            return [x for x in self.cache[table]]
 
         elif query+str(values) in self.cache:
-            return self.cache[query+str(values)]
+            return [x for x in self.cache[query+str(values)]]
 
         return []
 
@@ -353,9 +420,10 @@ class PASSTHINGEY(SETTINGSTHINGEY):
 
 class MainDuplicant(QtWidgets.QMainWindow):
     def __init__(self):
+        self.steady = False
         super().__init__()
         style(self, background='rgb(30,30,55)', color=WHITE)
-
+        self.easy_positions = easy_positions
         self.positioned = []
         self.position_mainwindow()
 
@@ -365,6 +433,9 @@ class MainDuplicant(QtWidgets.QMainWindow):
         self.create_browsingwidget()
         self.create_settings_buttons()
         self.create_browse_button()
+        self.create_dummy_btn()
+        self.create_searchbar()
+
         imdb_things(self)
         self.create_kill_all_dead()
 
@@ -372,7 +443,15 @@ class MainDuplicant(QtWidgets.QMainWindow):
         self.signal.listdelivery.connect(self.draw_files_and_folders)
 
         dbcache('skipped')
-        t.thread(self.browse_files_and_folders)
+
+
+        if t.config('browse_dummy') and t.config('completedict'):
+            self.draw_files_and_folders(t.config('completedict'))
+        else:
+            t.thread(self.browse_files_and_folders)
+
+        self.steady = True
+        self.resizeEvent()
 
     def create_kill_all_dead(self):
         class KillBTN(GODLabel, GLOBALHighLight):
@@ -410,8 +489,13 @@ class MainDuplicant(QtWidgets.QMainWindow):
                         self.main.ff = [x for x in self.main.ff if x != i]
 
 
-        kill = KillBTN(place=self, mouse=True, qframebox=True, center=True, text='KILL ALL DEAD', main=self)
-        pos(kill, coat=self.refresh_imdb_button, after=self.refresh_imdb_button, x_margin=3)
+        kill = KillBTN(place=self, mouse=True, qframebox=True, center=True, text='KILL DEAD (terminal)', main=self)
+        pos(kill, size=self.refresh_imdb_button, after=self.refresh_imdb_button, x_margin=3)
+        EventFilter(self.refresh_imdb_button, eventtype=QEvent.Move, master_fn=lambda: pos(kill, after=self.refresh_imdb_button, x_margin=3))
+
+    def resizeEvent(self, ev=None):
+        if self.steady:
+            pos(self.refresh_imdb_button, bottom=self.height() - 3, left=3)
 
     def browse_files_and_folders(self):
         folder = t.config('download_folder')
@@ -472,10 +556,10 @@ class MainDuplicant(QtWidgets.QMainWindow):
 
         files['unlinked'] = [x for x in files['files'] if x not in files['linked']]
 
-        completelist  = [{'used':False, 'path':x.rstrip(os.sep), 'category': 'folder'} for x in files['folders']]
-        completelist += [{'used':False, 'path':x.rstrip(os.sep), 'category': 'linked'} for x in files['linked']]
-        completelist += [{'used':False, 'path':x.rstrip(os.sep), 'category': 'unlinked'} for x in files['unlinked']]
-        completelist += [{'used':False, 'path':x.rstrip(os.sep), 'category': 'dead'} for x in files['dead']]
+        completelist  = [{'size':None, 'used':False, 'path':x.rstrip(os.sep), 'category': 'folder'} for x in files['folders']]
+        completelist += [{'size':None, 'used':False, 'path':x.rstrip(os.sep), 'category': 'linked'} for x in files['linked']]
+        completelist += [{'size':None, 'used':False, 'path':x.rstrip(os.sep), 'category': 'unlinked'} for x in files['unlinked']]
+        completelist += [{'size':None, 'used':False, 'path':x.rstrip(os.sep), 'category': 'dead'} for x in files['dead']]
 
         completelist.sort(key=lambda x:x['path'])
         self.signal.listdelivery.emit(completelist)
@@ -541,17 +625,92 @@ class MainDuplicant(QtWidgets.QMainWindow):
         t.signal_highlight()
         [x.update({'used':False}) for x in self.ff]
 
+    def create_searchbar(self):
+        class SearchBar(QtWidgets.QLineEdit):
+            def text_changed(self, *args, **kwargs):
+                if self.text().strip():
+
+                    if self.running and time.time() > self.release:
+                        tmp = [x for x in self.main.browser.widgets if x.data['path'] == '..']
+                        tmp += [x for x in self.main.browser.widgets if x not in tmp]
+
+                        for i in self.text().strip().lower().split():
+                            tmp = [x for x in tmp if i and i in x.data['path'].lower() or x.data['path'] == '..']
+
+                        t.signal_highlight()
+                        {style(x, background='rgba(10,50,20,150)', color=WHITE) for x in tmp if x.data['path'] != '..'}
+
+                        tmp += [x for x in self.main.browser.widgets if x not in tmp]
+                        for count, i in enumerate(tmp):
+                            if i.geometry().top() != count * (i.height() + 1):
+                                pos(i, top=count * (i.height() + 1))
+
+                        self.running = False
+
+                    else:
+                        self.release = time.time() + 1
+                        if not self.running or 'thread' in kwargs and kwargs['thread']:
+                            self.running = True
+                            t.thread(pre_sleep=1.1, master_fn=self.text_changed, name='browser_search', master_kwargs={'thread':True})
+
+                else:
+                    t.signal_highlight()
+                    for count, i in enumerate(self.main.browser.widgets):
+                        if i.geometry().top() != count * (i.height() + 1):
+                            pos(i, top=count * (i.height() + 1))
+
+
+            def follow_parent(self):
+                pos(self.backplate, after=self.main.browsebutton)
+
+        back = GODLabel(place=self);back.show()
+        style(back, background=GRAY50)
+        pos(back, height=self.browsebutton, after=self.browsebutton)
+        pos(back, reach=dict(right=dict(right=self.browser)))
+        button = SearchBar(back);button.show()
+        button.main, button.running, release = self, False, 1
+        button.textChanged.connect(button.text_changed)
+        button.setTextMargins(10,0,10,0)
+        style(button, background=BLACK, color=WHITE)
+        button.backplate = back
+        pos(button, inside=back, margin=1)
+        t.highlight_style(button, name='folders')
+        EventFilter(self.browser, master_fn=button.follow_parent, eventtype=QEvent.Move)
+
+    def create_dummy_btn(self):
+        class DummyBrowseBTN(GODLabel, GLOBALHighLight):
+            def mouseReleaseEvent(self, ev):
+                self.activation_toggle()
+                t.save_config(self.type, self.activated)
+                t.signal_highlight()
+
+            def follow_parent(self):
+                pos(self, before=self.main.browsebutton)
+
+        dummy = DummyBrowseBTN(place=self, qframebox=True, mouse=True, type='browse_dummy', main=self)
+        dummy.activation_toggle(force=t.config(dummy.type) or False)
+        dummy.eventfilter = EventFilter(self.browsebutton, eventtype=QEvent.Move, master_fn=dummy.follow_parent)
+        pos(dummy, height=self.browsebutton, width=7, before=self.browsebutton)
+        t.tooltip(dummy, 'uses a fake browising database pickle to speed things up while developing, once satesfied you can dismiss this fn and nothing bad will happen!')
+
     def create_browse_button(self):
         class Browse(GODLabel, GLOBALHighLight):
             def mouseReleaseEvent(self, ev):
                 self.main.browse_files_and_folders()
 
-        back = GODLabel(place=self.browser.title)
+            def follow_parent(self):
+                pos(self.backplate, above=self.main.browser)
+
+        back = GODLabel(place=self)
         style(back, background=GRAY50)
-        pos(back, height=self.browser.title, width=150)
+        pos(back, height=self.browser.title, width=150, top=120, left=10)
+        pos(self.browser, below=back)
         button = Browse(place=back, mouse=True, text='RE-BROWSE', center=True, bold=True, main=self)
+        button.backplate = back
         pos(button, inside=back, margin=1)
         t.highlight_style(button, name='folders')
+        EventFilter(self.browser, master_fn=button.follow_parent, eventtype=QEvent.Move)
+        self.browsebutton = back
 
     def create_settings_buttons(self):
         for i in [('HIDE LINKED',False,), ('HIDE UNLINKED',True,), ('HIDE SKIPPED',True,)]:
@@ -569,6 +728,7 @@ class MainDuplicant(QtWidgets.QMainWindow):
     def create_browsingwidget(self):
         self.browser = MovableScrollWidget(place=self, scroller=True, main=self)
         self.browser.make_title('BROWSING WIDGET')
+        self.browser.title.setAlignment(QtCore.Qt.AlignVCenter|QtCore.Qt.AlignHCenter)
         self.browser.expand_me()
         self.position_this(self.browser, vertical=True)
         pos(self.browser, width=self.width() * 0.5, move=[0,5])
