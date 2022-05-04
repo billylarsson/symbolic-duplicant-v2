@@ -425,6 +425,7 @@ class MainDuplicant(QtWidgets.QMainWindow):
         self.steady = False
         super().__init__()
         style(self, background='rgb(30,30,55)', color=WHITE)
+        self.setWindowTitle(os.environ['PROGRAM_NAME'] + ' ' +os.environ['VERSION'])
         self.easy_positions = easy_positions
         self.positioned = []
         self.position_mainwindow()

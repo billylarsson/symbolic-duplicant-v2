@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 PROGRAM = 'Symbolic Duplicant'
-VERSION = 'v0.0.1'
+VERSION = 'v2.0'
 
 import os
 import sys
