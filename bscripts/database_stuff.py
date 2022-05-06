@@ -11,11 +11,9 @@ sqlite = SQLite(
 )
 
 class DB:
-    class implemented:
-        local_path = sqlite.db_sqlite('implemented', 'local_path')
-        symbolic_link = sqlite.db_sqlite('implemented', 'symbolic_link')
     class skipped:
         local_path = sqlite.db_sqlite('skipped', 'local_path')
+        
     class titles:
         tconst = sqlite.db_sqlite('titles', 'tconst')
         type = sqlite.db_sqlite('titles', 'type')
@@ -23,6 +21,11 @@ class DB:
         start_year = sqlite.db_sqlite('titles', 'start_year', 'integer')
         end_year = sqlite.db_sqlite('titles', 'end_year', 'integer')
         runtime = sqlite.db_sqlite('titles', 'runtime', 'integer')
+
+    class ratings:
+        tconst = sqlite.db_sqlite('ratings', 'tconst', auto=False)
+        average = sqlite.db_sqlite('ratings', 'average', 'float')
+        votes = sqlite.db_sqlite('ratings', 'votes', 'integer')
 
     class settings:
         config = sqlite.db_sqlite('settings', 'config', 'blob')
@@ -39,4 +42,9 @@ class Translate:
         startYear = DB.titles.start_year
         endYear = DB.titles.end_year
         runtimeMinutes = DB.titles.runtime
+
+    class ratings:
+        tconst = DB.ratings.tconst
+        averageRating = DB.ratings.average
+        numVotes = DB.ratings.votes
 

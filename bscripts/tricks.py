@@ -1848,4 +1848,3 @@ class WorkerSignals(QObject):
     dictdelivery = pyqtSignal(dict)
     listdelivery = pyqtSignal(list)
     stringdelivery = pyqtSignal(str)
-    digitdelivery = pyqtSignal(int)

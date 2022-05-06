@@ -100,7 +100,7 @@ class IMDBPlate(GODLabel):
     def make_year(self):
         year = f"{self.parent.candidates[0][DB.titles.start_year] or ''}"
         if self.parent.candidates[0][DB.titles.end_year]:
-            year += f"- {self.parent.candidates[0][DB.titles.end_year]}"
+            year += f" - {self.parent.candidates[0][DB.titles.end_year]}"
 
         if year:
             label = TitleGenre(place=self, qframebox=True, text=year, center=True, mouse=True, parent=self.parent)
@@ -161,7 +161,10 @@ class IMDBPlate(GODLabel):
 
         class IMDBLink(TitleGenre):
             def follow_parent(self):
-                pos(self.backplate, below=self.parent, move=[10,-5])
+                if 'ratings_label' in dir(self.parent):
+                    pos(self.backplate, below=self.parent.ratings_label, move=[10,1])
+                else:
+                    pos(self.backplate, bottom=self.parent, left=self.parent, move=[-10,-3])
                 self.backplate.raise_()
 
             def mouseReleaseEvent(self, ev):
@@ -176,8 +179,8 @@ class IMDBPlate(GODLabel):
         link = f"http://imdb.com/title/{self.parent.candidates[0][DB.titles.tconst]}"
         back = GODLabel(place=self.main, styleSheet='background:rgb(10,10,10)', parent=self.parent)
         label = IMDBLink(place=back, center=True, mouse=True, parent=self.parent, text=link)
-        label.deactivated_on = dict(background=PINK3, color=BLACK)
-        label.deactivated_off = dict(background=PINK4, color=BLACK)
+        label.deactivated_on = dict(background='rgb(100,100,200)', color=BLACK)
+        label.deactivated_off = dict(background='rgb(100,100,150)', color=BLACK)
         t.signal_highlight()
         t.shrink_label_to_text(label, x_margin=20, y_margin=2, height=True)
 
@@ -188,6 +191,8 @@ class IMDBPlate(GODLabel):
 
         EventFilter(eventparent=self.parent, eventtype=QEvent.Move, master_fn=label.follow_parent)
         EventFilter(eventparent=self.parent, eventtype=QEvent.Resize, master_fn=label.follow_parent)
+        EventFilter(eventparent=self.parent.title, eventtype=QEvent.MouseButtonPress, master_fn=label.follow_parent)
+        EventFilter(eventparent=self.parent.cover, eventtype=QEvent.MouseButtonPress, master_fn=label.follow_parent)
         EventFilter(eventparent=self.parent, eventtype=QEvent.Close, master_fn=lambda: self.imdblink.close())
 
     def position_this(self, widget, vertical=True, x_extra=0, y_extra=0, **kwargs):
@@ -271,7 +276,12 @@ class CoverTurner(MovableScrollWidget):
         loc = self.get_distant_path_object()
 
         if not os.path.exists(loc.folder):
-            ssh_command(f'mkdir -m 777 "{loc.folder}"')
+            if t.config('nas_ssh') and t.config('nas_login') and t.config('nas_pwd'):
+                ssh_command(f'mkdir -m 777 "{loc.folder}"')
+            else:
+                os.umask(0)
+                os.mkdirs(loc.folder, 0o777)
+
             if os.path.exists(loc.full_path):
                 self.title.setText(f'MADE FOLDER: {loc.folder.split(os.sep)[-1]}')
             else:
@@ -463,7 +473,62 @@ class CoverTurner(MovableScrollWidget):
         self.change_to_implementing_button()
         self.change_to_unimplement_button()
         self.show_year_genre_runtime_type()
+        self.show_rating()
+
         self.overwrite = False
+
+        pos(self, move=[1,1])
+        pos(self, move=[-1,-1])  # lazy hack, this emits a move/resize signal
+
+    def show_rating(self):
+        if 'ratings_label' in dir(self):
+            self.ratings_label.close()
+            del self.ratings_label
+
+        if not self.main.dbcache(table='ratings', curious=True):
+            data = sqlite.execute('select * from ratings', all=True)
+            tmp = {x[DB.ratings.tconst]: x[DB.ratings.average] for x in data}
+            self.main.dbcache(table='ratings', store_this=tmp)
+
+        ratings = self.main.dbcache('ratings', as_is=True)
+        tconst = self.candidates[0][DB.titles.tconst]
+
+        if tconst in ratings:
+            try: rating = float(ratings[tconst])
+            except ValueError: return
+
+            if rating > 10 or rating <= 0:
+                return
+
+            class RatingssLabel(GODLabel):
+                def follow_parent(self):
+                    pos(self, below=self.parent)
+                    self.raise_()
+
+            self.ratings_label = RatingssLabel(place=self.main, parent=self)
+            pos(self.ratings_label, width=self, below=self, height=12)
+
+            EventFilter(eventparent=self, eventtype=QEvent.Move, master_fn=self.ratings_label.follow_parent)
+            EventFilter(eventparent=self, eventtype=QEvent.Resize, master_fn=self.ratings_label.follow_parent)
+            EventFilter(eventparent=self.title, eventtype=QEvent.MouseButtonPress, master_fn=self.ratings_label.follow_parent)
+            EventFilter(eventparent=self.cover, eventtype=QEvent.MouseButtonPress, master_fn=self.ratings_label.follow_parent)
+            EventFilter(eventparent=self, eventtype=QEvent.Close, master_fn=lambda: self.ratings_label.close())
+
+            for i in range(1, 11):
+                label = GODLabel(place=self.ratings_label, qframebox=True, edges=4)
+                pos(label, height=self.ratings_label, width=self.ratings_label.width() / 10)
+                pos(label, left=(i-1) * label.width())
+                style(label, color=BLACK)
+
+                if rating > i+1:
+                    style(label, background=WHITE)
+                else:
+                    style(label, background=GRAY)
+                    part = GODLabel(place=self.ratings_label, styleSheet='background:white')
+                    pos(part, height=label.height()-2, width=label.width() * (rating - i) - 4, left=(i-1) * label.width(), move=[1,1])
+
+                if i == 10:
+                    pos(label, reach=dict(right=self.ratings_label.width()-1))
 
     def show_year_genre_runtime_type(self):
         if not 'imdbplate' in dir(self):

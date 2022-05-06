@@ -1,7 +1,7 @@
 from PyQt5                     import Qt, QtCore, QtWidgets
 from PyQt5.QtCore              import QEvent
 from bscripts.database_stuff   import DB, sqlite
-from bscripts.imdb_updater     import imdb_things
+from bscripts.imdb_updater     import IMDbButton
 from bscripts.imdbstuff        import CoverTurner
 from bscripts.preset_colors    import *
 from bscripts.settings_widgets import Canvas, EventFilter, GLOBALHighLight
@@ -151,15 +151,17 @@ class File(FilesFolder):
     def get_name(self, path, years=[], episode=[]):
         name = path.split(os.sep)[-1]
 
-        if '(' in name:
-            name = name[0:name.find('(')]
+        if path and path[0] != '!':  # ! overrides this feature (only possible when manualy searching)
+            name = name.split(' -')[0]
+            name = name.split('(')[0]
+
+            while name.find('[') > -1 and name.find('[') < name.find(']'):
+                kill = name[name.find('['):name.find(']')+1]
+                name = name.replace(kill, "")
 
         for i in years + episode:
             if str(i).lower() in name.lower():
                 name = name[0:name.lower().find(str(i).lower())]
-
-        if name and name[0] == '[' and ']' in name:
-            name = name[name.find(']')+1:]
 
         name = name.replace(' ', '.').split('.')
         name = [x for x in name if x] # kills empty
@@ -272,14 +274,17 @@ class File(FilesFolder):
 
         self.candidate = CoverTurner(place=self.main, candidates=data, main=self.main, signal=True, data=self.data, parent=self)
         if ev:
-            pos(self.candidate, top=ev.y(), left=ev.x())
-
+            pos(self.candidate, after=self.main.browser, x_margin=10)
 
 class DBFromCache:
     def __init__(self):
         self.cache = {}
 
-    def __call__(self, table=None, reset=False, query=None, values=None, all=True):
+    def __call__(self, table=None, reset=False, query=None, values=None, all=True, store_this=False, curious=False, as_is=False):
+        if store_this:
+            self.cache[table] = store_this
+            return True
+
         if reset:
             if not table:
                 self.cache = {}
@@ -287,6 +292,14 @@ class DBFromCache:
                 self.cache.pop(table)
             elif query and query in self.cache:
                 self.cache.pop(query)
+
+        if curious:
+            if table and table in self.cache:
+                return True
+            elif query and query+str(values) in self.cache[query+str(values)]:
+                return True
+            else:
+                return False
 
         if query and query+str(values) not in self.cache:
             data = sqlite.execute(query=query, values=values, all=all)
@@ -298,10 +311,16 @@ class DBFromCache:
             self.cache[table] = {x for x in data}
 
         if table and table in self.cache:
-            return [x for x in self.cache[table]]
+            if as_is:
+                return self.cache[table]
+            else:
+                return [x for x in self.cache[table]]
 
         elif query+str(values) in self.cache:
-            return [x for x in self.cache[query+str(values)]]
+            if as_is:
+                return self.cache[query+str(values)]
+            else:
+                return [x for x in self.cache[query+str(values)]]
 
         return []
 
@@ -439,14 +458,14 @@ class MainDuplicant(QtWidgets.QMainWindow):
         self.create_dummy_btn()
         self.create_searchbar()
 
-        imdb_things(self)
+        self.create_imdb_refresh_btn()
         self.create_kill_all_dead()
 
         self.signal = t.signals('main')
         self.signal.listdelivery.connect(self.draw_files_and_folders)
 
         dbcache('skipped')
-
+        self.dbcache = dbcache
 
         if t.config('browse_dummy') and t.config('completedict'):
             self.draw_files_and_folders(t.config('completedict'))
@@ -454,7 +473,12 @@ class MainDuplicant(QtWidgets.QMainWindow):
             t.thread(self.browse_files_and_folders)
 
         self.steady = True
+
         self.resizeEvent()
+
+    def create_imdb_refresh_btn(self):
+        self.refresh_imdb_button = IMDbButton(place=self, main=self, text='UPDATE IMDb', mouse=True)
+        pos(self.refresh_imdb_button, size=[150,35])
 
     def create_kill_all_dead(self):
         class KillBTN(GODLabel, GLOBALHighLight):
@@ -570,7 +594,9 @@ class MainDuplicant(QtWidgets.QMainWindow):
     def draw_files_and_folders(self, ff):
         self.ff = ff
         t.close_and_pop(self.browser.widgets)
-        self.draw_this_dir(t.config('download_folder').rstrip(os.sep), smooth=True)
+
+        if t.config('download_folder'):
+            self.draw_this_dir(t.config('download_folder').rstrip(os.sep), smooth=True)
 
     def draw_this_dir(self, folder, smooth=False):
         for ff in [('folder', Folder,), ({'linked','unlinked'}, File,)]:

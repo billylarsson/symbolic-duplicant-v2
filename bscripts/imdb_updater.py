@@ -8,208 +8,300 @@ import os
 import shutil
 import time
 
-def imdb_things(self):
-    class RefreshButton(GODLabel, GLOBALHighLight):
-        def __init__(self, *args, **kwargs):
-            super().__init__(
-                deactivated_on=dict(background=BLACK, color=WHITE),
-                deactivated_off=dict(background=GRAY, color=BLACK),
-                *args, **kwargs
-            )
-            self.setAlignment(QtCore.Qt.AlignHCenter|QtCore.Qt.AlignVCenter)
-            self.setFrameShape(QtWidgets.QFrame.Box)
-            self.setLineWidth(1)
+
+class IMDbButton(GODLabel, GLOBALHighLight):
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            deactivated_on=dict(background=BLACK, color=WHITE),
+            deactivated_off=dict(background=GRAY, color=BLACK),
+            *args, **kwargs
+        )
+        self.setAlignment(QtCore.Qt.AlignHCenter|QtCore.Qt.AlignVCenter)
+        self.setFrameShape(QtWidgets.QFrame.Box)
+        self.setLineWidth(1)
+
+    def download(self, url):
+        file = t.download_file(url, days=1)
+
+        if not os.path.exists(file):
+            return False
+        else:
+            return file
+
+    def unpack(self, file):
+        tmpfile = t.tmp_file(file_of_interest=file, hash=True, delete=True, extension='tsv')
+        try:
+            with gzip.open(file, 'rb') as f_in:
+                with open(tmpfile, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+        except:
+            return False
+
+        if not os.path.exists(tmpfile):
+            return False
+
+        return tmpfile
+
+    def download_and_update(self, signal, query, values_org):
+
+        all_categories = [
+            'short',
+            'movie',
+            'tvEpisode',
+            'tvSeries',
+            'tvShort',
+            'tvMovie',
+            'tvMiniSeries',
+            'tvSpecial',
+            'video',
+            'videoGame',
+            'tvPilot'
+        ]  # this is during dev
 
 
-    class RefreshImdb(RefreshButton):
-        def download_and_update(self, signal):
-            manylist = []
+        signal.progress.emit(dict(text='DL: TITLES...'))
+        url = 'https://datasets.imdbws.com/title.basics.tsv.gz'
+        file = self.download(url)
+        if not file:
+            signal.error.emit(dict(text='DOWNLOAD FAILED'))
+            return False
 
-            def download(url):
-                file = t.download_file(url, days=1)
-                if not os.path.exists(file):
-                    return False
-                else:
-                    return file
+        signal.progress.emit(dict(text='UNPACKING...'))
+        tsvfile = self.unpack(file)
+        if not tsvfile:
+            signal.error.emit(dict(text='UNPACKING FAILED'))
+            return False
 
-            def unpack(file, url):
-                tmpfile = t.tmp_file(file_of_interest=url, hash=True, delete=True, extension='tsv')
-                try:
-                    with gzip.open(file, 'rb') as f_in:
-                        with open(tmpfile, 'wb') as f_out:
-                            shutil.copyfileobj(f_in, f_out)
-                except:
-                    return False
+        signal.listdelivery.emit([signal, tsvfile])  # lazy, sqlite columns needs mainthread, to much work, to less gain
 
-                if not os.path.exists(tmpfile):
-                    return False
+    def main_thread_titles(self, listdelivery):
+        manylist = []
+        signal, tsvfile = listdelivery[0], listdelivery[1]
+        query, values_org = sqlite.empty_insert_query('titles')
 
-                return tmpfile
+        def get_cycle_stuff(f):
+            content = f.read().split('\n')
+            headers = content[0].split('\t')
+            for count, i in enumerate(headers):
+                if i == 'titleType':
+                    typeindex = count
 
-            def get_cycle_stuff(f):
-                content = f.read().split('\n')
-                headers = content[0].split('\t')
-                for count, i in enumerate(headers):
-                    if i == 'titleType':
-                        typeindex = count
+            return content, headers, typeindex
 
-                return content, headers, typeindex
+        includetypes = {'movie', 'tvSeries', 'tvMiniSeries', 'video', 'tvMovie'}
 
-            signal.progress.emit(dict(text='DOWNLOADING...'))
-            url = 'https://datasets.imdbws.com/title.basics.tsv.gz'
-            file = download(url)
-            if not file:
-                signal.error.emit(dict(text='DOWNLOAD FAILED'))
-                return False
+        checkpoint = 10000
+        timer = time.time()
+        with open(tsvfile) as f:
+            signal.progress.emit(dict(text='UPDATING...'))
+            content, headers, typeindex = get_cycle_stuff(f)
 
-            signal.progress.emit(dict(text='UNPACKING...'))
-            tsvfile = unpack(file, url)
-            if not tsvfile:
-                signal.error.emit(dict(text='UNPACKING FAILED'))
-                return False
+            for checkcount, i in enumerate(content[1:]):
+                data = i.split('\t')
 
-            includetypes = {'movie', 'tvSeries', 'tvMiniSeries'}
+                if len(data) != len(headers):  # discards random errors (last row)
+                    continue
 
-            checkpoint = 10000
-            timer = time.time()
-            with open(tsvfile) as f:
-                signal.progress.emit(dict(text='UPDATING...'))
-                content, headers, typeindex = get_cycle_stuff(f)
-                query, values_org = sqlite.empty_insert_query('titles')
-                sqlite.execute('delete from titles;') # deletes everything before starting
+                if data[typeindex] not in includetypes:
+                    continue
 
-                for checkcount, i in enumerate(content[1:]):
-                    data = i.split('\t')
+                values = [None] * len(values_org)  # fresh values
 
-                    if len(data) != len(headers):  # discards random errors (last row)
+                for count in range(len(headers)):
+                    if data[count] == '\\N':  # None
                         continue
 
-                    if data[typeindex] not in includetypes:
+                    elif headers[count] == 'originalTitle':  # that data seems unnessesary atm
                         continue
 
-                    values = [None] * len(values_org)  # fresh values
+                    elif headers[count] == 'isAdult':  # genre/Adult ALMOST provides same knowledge
+                        continue
 
-                    for count in range(len(headers)):
-                        if data[count] == '\\N':  # None
-                            continue
+                    elif headers[count] == 'genres':
+                        genres = data[count].split(',')
+                        for genre in genres:
 
-                        elif headers[count] == 'originalTitle':  # that data seems unnessesary atm
-                            continue
+                            if genre == '\\N':  # None
+                                continue
 
-                        elif headers[count] == 'isAdult':  # genre/Adult ALMOST provides same knowledge
-                            continue
+                            if not getattr(DB.titles, genre, None):
+                                if manylist:
+                                    signal.dictdelivery.emit(dict(query=query, values=manylist))  # empties stack
+                                    manylist = []
 
-                        elif headers[count] == 'genres':
-                            genres = data[count].split(',')
-                            for genre in genres:
+                                column = sqlite.db_sqlite('titles', genre, 'bint')
+                                setattr(DB.titles, genre, column)
+                                query, values_org = sqlite.empty_insert_query('titles')
 
-                                if genre == '\\N':  # None
-                                    continue
+                                for prolong in range(len(values_org) - len(values)):  # prolong values
+                                    values.append(None)
 
-                                if not getattr(DB.titles, genre, None):
-                                    if manylist:
-                                        sqlite.execute(query, values=manylist)  # empties stack
-                                        manylist = []
+                            values[getattr(DB.titles, genre)] = True
 
-                                    column = sqlite.db_sqlite('titles', genre)
-                                    setattr(DB.titles, genre, column)
-                                    query, values_org = sqlite.empty_insert_query('titles')
-
-                                    for prolong in range(len(values_org) - len(values)):  # prolong values
-                                        values.append(None)
-
-                                values[getattr(DB.titles, genre)] = True
-
-                        else:
-                            index = getattr(Translate.titles, headers[count])
-
-                            for cc in range(len(data[count])):  # forces string-int into int
-
-                                if not data[count][cc].isdigit():
-                                    values[index] = data[count]
-                                    break
-
-                                elif cc + 1 == len(data[count]):
-                                    values[index] = int(data[count])
-
-                    manylist.append(tuple(values))
-                    if checkcount > checkpoint and time.time() - timer > 0.25:
-                        timer = time.time()
-                        checkpoint += 10000
-                        signal.progress.emit(dict(
-                            progress=checkcount / len(content),
-                        ))
-
-            if manylist:
-                signal.progress.emit(dict(progress=1, text='INJECTING'))
-                sqlite.execute(query, values=manylist)
-                signal.finished.emit()
-            else:
-                signal.error.emit(dict(text='NOTHING?'))
-
-        def mouseReleaseEvent(self, ev: QtGui.QMouseEvent) -> None:
-            self.start_update_process()
-
-        def start_update_process(self):
-            def show_progress(progressdict, *args, **kwargs):
-
-                if 'text' in progressdict:
-                    if 'transparent_label' in dir(self):
-                        self.transparent_label.setText(progressdict['text'])
                     else:
-                        self.setText(progressdict['text'])
+                        index = getattr(Translate.titles, headers[count])
 
-                if 'progress' in progressdict:
-                    if 'progresslabel' not in dir(self):
-                        self.progresslabel = GODLabel(place=self)
-                        self.progresslabel.setFrameShape(QtWidgets.QFrame.Box)
-                        self.progresslabel.setLineWidth(1)
-                        t.style(self.progresslabel, background=GREEN, color=BLACK)
-                        t.pos(self.progresslabel, height=self, width=0)
-                        self.transparent_label = GODLabel(place=self)
-                        t.pos(self.transparent_label, inside=self)
-                        t.style(self.transparent_label, background='rgba(0,0,0,0)', color=BLACK, font=16)
-                        self.transparent_label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+                        for cc in range(len(data[count])):  # forces string-int into int
 
-                    width = self.width() * progressdict['progress']
-                    if width > self.progresslabel.width() + 1:
-                        t.pos(self.progresslabel, width=width)
-                        if 'text' not in progressdict:
-                            percent = str(round(progressdict['progress'] * 100,2)) + '%'
-                            self.transparent_label.setText(percent)
-                            self.setText("")
+                            if not data[count][cc].isdigit():
+                                values[index] = data[count]
+                                break
 
-            def show_error(errordict, *args, **kwargs):
-                if 'progresslabel' in dir(self):
-                    self.progresslabel.close()
-                    del self.progresslabel
+                            elif cc + 1 == len(data[count]):
+                                values[index] = int(data[count])
+
+                manylist.append(tuple(values))
+                if checkcount > checkpoint and time.time() - timer > 0.25:
+                    timer = time.time()
+                    checkpoint += 10000
+                    signal.progress.emit(dict(
+                        progress=checkcount / len(content),
+                    ))
+
+        if manylist:
+            signal.progress.emit(dict(progress=1, text='INJECTING'))
+            signal.dictdelivery.emit(dict(query=query, values=manylist))
+            signal.finished.emit()
+        else:
+            signal.error.emit(dict(text='NOTHING?'))
+
+    def mouseReleaseEvent(self, ev: QtGui.QMouseEvent) -> None:
+        if not self.activated:
+            self.activation_toggle(force=True, save=False)
+            self.start_update_process()
+        else:
+            self.setText('NOPE!')
+
+    def update_ratings(self, signal, query, values_org):
+        manylist = []
+        url = 'https://datasets.imdbws.com/title.ratings.tsv.gz'
+        signal.progress.emit(dict(text='DL: RATINGS...'))
+        file = self.download(url)
+        if not file:
+            signal.error.emit(dict(text='DOWNLOAD FAILED'))
+            return False
+
+        signal.progress.emit(dict(text='UNPACKING...'))
+        tsvfile = self.unpack(file)
+        if not tsvfile:
+            signal.error.emit(dict(text='UNPACKING FAILED'))
+            return False
+
+        checkpoint = 10000
+        timer = time.time()
+
+        with open(tsvfile) as f:
+            signal.progress.emit(dict(text='UPDATING...'))
+            content = f.read().split('\n')
+            headers = content[0].split('\t')
+
+            for checkcount, i in enumerate(content[1:]):
+                data = i.split('\t')
+
+                if len(data) != len(headers):  # discards random errors (last row)
+                    continue
+
+                values = [None] * len(values_org)  # fresh values
+
+                for count in range(len(headers)):
+                    if data[count] == '\\N':  # None
+                        continue
+
+                    index = getattr(Translate.ratings, headers[count])
+
+                    for cc in range(len(data[count])):  # forces string-int into int
+
+                        if not data[count][cc] == '.' and not data[count][cc].isdigit():
+                            values[index] = data[count]
+                            break
+
+                        elif cc + 1 == len(data[count]):
+                            if '.' in data[count]:
+                                values[index] = float(data[count])
+                            else:
+                                values[index] = int(data[count])
+
+                manylist.append(tuple(values))
+                if checkcount > checkpoint and time.time() - timer > 0.25:
+                    timer = time.time()
+                    checkpoint += 10000
+                    signal.progress.emit(dict(
+                        progress=checkcount / len(content),
+                    ))
+
+        if manylist:
+            signal.progress.emit(dict(progress=1, text='INJECTING'))
+            signal.dictdelivery.emit(dict(query=query, values=manylist))
+            signal.finished.emit()
+        else:
+            signal.error.emit(dict(text='NOTHING?'))
+
+    def start_update_process(self):
+        def show_progress(progressdict, *args, **kwargs):
+
+            if 'text' in progressdict:
                 if 'transparent_label' in dir(self):
-                    self.transparent_label.close()
-                    del self.transparent_label
+                    self.transparent_label.setText(progressdict['text'])
+                else:
+                    self.setText(progressdict['text'])
 
-                self.setText(errordict['text'])
+            if 'progress' in progressdict:
+                if 'progresslabel' not in dir(self):
+                    self.progresslabel = GODLabel(place=self)
+                    self.progresslabel.setFrameShape(QtWidgets.QFrame.Box)
+                    self.progresslabel.setLineWidth(1)
+                    t.style(self.progresslabel, background=GREEN, color=BLACK)
+                    t.pos(self.progresslabel, height=self, width=0)
+                    self.transparent_label = GODLabel(place=self)
+                    t.pos(self.transparent_label, inside=self)
+                    t.style(self.transparent_label, background=TRANSPARENT, color=BLACK, font=16)
+                    self.transparent_label.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
 
-            def show_finished(*args, **kwargs):
-                if 'progresslabel' in dir(self):
-                    self.progresslabel.close()
-                    del self.progresslabel
-                if 'transparent_label' in dir(self):
-                    self.transparent_label.close()
-                    del self.transparent_label
+                width = self.width() * progressdict['progress']
+                if width > self.progresslabel.width() + 1:
+                    t.pos(self.progresslabel, width=width)
+                    if 'text' not in progressdict:
+                        percent = str(round(progressdict['progress'] * 100, 2)) + '%'
+                        self.transparent_label.setText(percent)
+                        self.setText("")
 
-                self.setText('JOBS DONE!')
+        def show_error(errordict, *args, **kwargs):
+            if 'progresslabel' in dir(self):
+                self.progresslabel.close()
+                del self.progresslabel
+            if 'transparent_label' in dir(self):
+                self.transparent_label.close()
+                del self.transparent_label
 
-            signal = t.signals()
-            signal.progress.connect(show_progress)
-            signal.error.connect(show_error)
-            signal.finished.connect(show_finished)
-            t.start_thread(self.download_and_update, slave_args=signal)
+            self.activation_toggle(force=False, save=False)
+            self.setText(errordict['text'])
 
-    self.refresh_imdb_button = RefreshImdb(
-        place=self,
-        mouse=True,
-        main=self,
-    )
-    t.pos(self.refresh_imdb_button, size=[200,50], bottom=self.height()-1)
-    self.refresh_imdb_button.setText('UPDATE IMdb')
-    t.signal_highlight()
+        def show_finished(*args, **kwargs):
+            if 'progresslabel' in dir(self):
+                self.progresslabel.close()
+                del self.progresslabel
+            if 'transparent_label' in dir(self):
+                self.transparent_label.close()
+                del self.transparent_label
+
+            self.activation_toggle(force=False, save=False)
+            self.setText('JOBS DONE!')
+
+        def main_thread_inject(delivery):
+            sqlite.execute(query=delivery['query'], values=delivery['values'])
+
+        sqlite.execute('delete from ratings;')  # suboptimal
+        sqlite.execute('delete from titles;')  # suboptimal
+
+        signal = t.signals()
+        signal.progress.connect(show_progress)
+        signal.dictdelivery.connect(main_thread_inject)
+        signal.listdelivery.connect(self.main_thread_titles)
+        signal.error.connect(show_error)
+        signal.finished.connect(show_finished)
+
+        query, values_org = sqlite.empty_insert_query('ratings')
+        t.start_thread(self.update_ratings, slave_args=(signal, query, values_org,), name='imdbupdate')
+
+        query, values_org = sqlite.empty_insert_query('titles')
+        t.start_thread(self.download_and_update, slave_args=(signal, query, values_org,), name='imdbupdate')
