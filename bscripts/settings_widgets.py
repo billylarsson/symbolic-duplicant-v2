@@ -717,7 +717,7 @@ class MovableScrollWidget(GODLabel):
         def follow_parent(self, *args, **kwargs):
             if not self.old_position:
                 pos(self, after=self.parent, move=[-1, self.parent.toolplate.height()])
-            else:
+            elif 'scroller_offset' in dir(self):
                 pos(self, after=self.parent, top=self.parent, move=[-1, self.old_position.scroller_offset])
 
             self.raise_()

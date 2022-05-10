@@ -190,6 +190,7 @@ class File(FilesFolder):
         episode = self.get_episode(searchstring)
         years = self.get_years(searchstring)
         name = self.get_name(searchstring, episode=episode, years=years)
+
         return name, years, episode
 
     def gather_imdb_candidates(self, name, years, episode):

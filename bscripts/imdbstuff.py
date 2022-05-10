@@ -111,6 +111,7 @@ class IMDBPlate(GODLabel):
             self.position_this(label)
 
     def make_categories(self):
+
         for count, i in enumerate(self.parent.candidates[0]):
             if i == '1':
                 cols = [x for x in dir(DB.titles) if '__' not in x]
@@ -254,6 +255,20 @@ class CoverTurner(MovableScrollWidget):
 
         self.make_next_prev_buttons()
 
+    def text_changed(self, text):
+        if 'tiplabel' not in dir(self.lineedit):
+            self.lineedit.tiplabel = GODLabel(place=self.lineedit, text='YEAR MISSING FROM QUERY', center=True, direct_hide=True)
+            style(self.lineedit.tiplabel, background=TRANSPARENT, color=GRAY, font=8)
+            t.shrink_label_to_text(self.lineedit.tiplabel, x_margin=8)
+            pos(self.lineedit.tiplabel, height=self.lineedit, right=self.lineedit)
+
+        if len(text) > 3:
+            if not self.parent.get_years(text):
+                self.lineedit.tiplabel.show()
+                return
+
+        self.lineedit.tiplabel.hide()
+
     def mouseReleaseEvent(self, ev):
         if ev.button() == 2:
             self.signal.killswitch.emit()
@@ -262,6 +277,7 @@ class CoverTurner(MovableScrollWidget):
         self.lineedit = QtWidgets.QLineEdit(self.toolplate)
         self.lineedit.setTextMargins(10,0,10,0)
         self.lineedit.returnPressed.connect(self.manual_search)
+        self.lineedit.textChanged.connect(self.text_changed)
         self.lineedit.show()
         self.toolplate.widgets.append(self.lineedit)
         pos(self.lineedit, coat=self.implement_btn, below=self.implement_btn)
@@ -289,7 +305,7 @@ class CoverTurner(MovableScrollWidget):
 
         if os.path.exists(loc.full_path) and self.overwrite:
             os.remove(loc.full_path)
-            os.sync()
+            if os.sep == '/': os.sync()
             time.sleep(0.1)
 
         if not os.path.exists(loc.full_path):
@@ -303,7 +319,7 @@ class CoverTurner(MovableScrollWidget):
             t.signal_highlight()
             return
 
-        os.sync()
+        if os.sep == '/': os.sync()
         time.sleep(0.1)
 
         if os.path.islink(loc.full_path):
@@ -512,7 +528,7 @@ class CoverTurner(MovableScrollWidget):
             EventFilter(eventparent=self, eventtype=QEvent.Resize, master_fn=self.ratings_label.follow_parent)
             EventFilter(eventparent=self.title, eventtype=QEvent.MouseButtonPress, master_fn=self.ratings_label.follow_parent)
             EventFilter(eventparent=self.cover, eventtype=QEvent.MouseButtonPress, master_fn=self.ratings_label.follow_parent)
-            EventFilter(eventparent=self, eventtype=QEvent.Close, master_fn=lambda: self.ratings_label.close())
+            EventFilter(eventparent=self, eventtype=QEvent.Close, master_fn=lambda: self.ratings_label.close() if 'ratings_label' in dir(self) else None)
 
             for i in range(1, 11):
                 label = GODLabel(place=self.ratings_label, qframebox=True, edges=4)
@@ -520,7 +536,7 @@ class CoverTurner(MovableScrollWidget):
                 pos(label, left=(i-1) * label.width())
                 style(label, color=BLACK)
 
-                if rating > i+1:
+                if rating > i:
                     style(label, background=WHITE)
                 else:
                     style(label, background=GRAY)
